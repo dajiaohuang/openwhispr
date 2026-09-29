@@ -150,7 +150,8 @@ class ClipboardManager {
 
     if (this.commandExists("wl-copy")) {
       try {
-        const result = spawnSync("wl-copy", ["--", text], { timeout: 50 });
+        // Give Wayland IPC enough time to finish before falling back to Electron's X11 clipboard.
+        const result = spawnSync("wl-copy", ["--", text], { timeout: 200 });
         if (result.status === 0) {
           clipboard.writeText(text);
           return;

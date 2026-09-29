@@ -63,12 +63,13 @@ const clipboardModulePath = require.resolve("../../src/helpers/clipboard");
 
 const originalLoad = Module._load;
 
-function loadClipboardManager({ spawn, accessibility = true } = {}) {
+function loadClipboardManager({ spawn, spawnSync, accessibility = true } = {}) {
   delete require.cache[clipboardModulePath];
 
   Module._load = function loadWithMocks(request, parent, isMain) {
     if (request === "electron") {
       return {
+        app: { isPackaged: false },
         clipboard: fakeClipboard,
         systemPreferences: {
           isTrustedAccessibilityClient: () => accessibility,
@@ -76,7 +77,10 @@ function loadClipboardManager({ spawn, accessibility = true } = {}) {
       };
     }
     if (request === "child_process" && spawn) {
-      return { ...childProcess, spawn };
+      return { ...childProcess, spawn, ...(spawnSync ? { spawnSync } : {}) };
+    }
+    if (request === "child_process" && spawnSync) {
+      return { ...childProcess, spawnSync };
     }
     return originalLoad.call(this, request, parent, isMain);
   };
@@ -729,6 +733,28 @@ test("XWayland fallback remains reachable after native Wayland failure", async (
     spawnCalls.map((call) => call.args),
     [["--uinput", "--shift-insert"], ["--shift-insert"]]
   );
+});
+
+test("GNOME Wayland clipboard copy allows wl-copy IPC more than one scheduler slice", async () => {
+  const calls = [];
+  const TestClipboardManager = loadClipboardManager({
+    spawnSync: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    },
+  });
+  const manager = new TestClipboardManager();
+  manager.commandExists = (command) => command === "wl-copy";
+
+  await withWaylandEnvironment("GNOME", () => manager._writeClipboardWayland("fresh text"));
+
+  assert.deepEqual(calls, [
+    {
+      command: "wl-copy",
+      args: ["--", "fresh text"],
+      options: { timeout: 200 },
+    },
+  ]);
 });
 
 test("pasteMacOS restores clipboard after the short macOS delay on successful fast paste", async () => {
